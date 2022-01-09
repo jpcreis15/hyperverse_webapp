@@ -1,0 +1,1684 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<title>three.js webgl - additive animation - skinning</title>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+		<link type="text/css" rel="stylesheet" href="main.css">
+		<style>
+			a {
+				color: blue;
+			}
+			.control-inactive button {
+				color: #888;
+			}
+		</style>
+	</head>
+	<body>
+
+  
+		<div id="container"></div>
+		
+		<script src='js/perlin.js'></script>
+		
+		<script type="module">
+
+			import * as THREE from 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r116/three.module.js';
+			//import * as THREE from '../build/three.module.js';
+
+			import Stats from './jsm/libs/stats.module.js';
+			//import { GUI } from './jsm/libs/lil-gui.module.min.js';
+			import { OrbitControls } from './jsm/controls/OrbitControls.js';
+			import { GLTFLoader } from 'https://unpkg.com/three@0.116.0/examples/jsm/loaders/GLTFLoader.js';
+			//import { GLTFLoader } from './jsm/loaders/GLTFLoader.js';
+
+			/////////////////////////////////////////////////////////////////////////////
+			/////////////////////////////////////////////////////////////////////////////
+			// Declarations from city
+			
+			// Color hex codes
+			const colors = {
+				WHITE: 0xffffff,
+				BLACK: 0x000000,
+				DARK_BROWN: 0x736b5c,
+				STREET: 0x999999,
+				BUILDING: 0xe8e8e8,
+				GREEN: 0x81a377,
+				TREE: 0x216e41,
+				DARK_GREY: 0x888888,
+				WATER: 0x4b95de
+			 };
+			 
+			 // City attribute variables: the variables below control the properties of our generated city
+			 
+			 // The number of blocks to include in our grid in dimensional format (i.e. the value of 10 will
+			 // create a grid with 10 by 10 blocks)
+			 var gridSize = 15;
+			 
+			 // City road widths. Roads seperate our city grid blocks.
+			 var roadWidth = 20;
+			 
+			 // The maximum 'density' value to use when generating trees for our park blocks
+			 var maximumTreeDensity = 70;
+			 
+			 // City block size
+			 var blockSize = 150;
+			 
+			 // City block margin
+			 var blockMargin = 10;
+			 
+			 // Minimum and maximum building height values
+			 var minBuildingHeight = 50;
+			 var maxBuildingHeight = 250;
+			 
+			 // Helper functions used to get our total city size
+			 function getCityWidth() {
+				return blockSize * gridSize;
+			 }
+			 
+			 function getCityLength() {
+				return blockSize * gridSize;
+			 }
+			 
+			 // Maximum building height deviation allowed for buildings allocated within the same block
+			 const maxBuildingHeightDeviation = 15;
+			 
+			 // This is a percentage cut-off we use to serve as an indicator of whether we have a 'tall'
+			 // building or not. Generally, we use 2 canvas elements - one for tall buildings and the other
+			 // which is reserved for smaller ones.
+			 const tallPercentageCutoff = 40;
+			 
+			 // Initialize the smaller building canvas dimensions and generate the canvas for these buildings:
+			 
+			 const smallBuildingCanvasWidth = 8;
+			 const smallBuildingCanvasHeight = 16;
+			 
+			 var smallBuildingCanvas = generateBuildingCanvas(
+				smallBuildingCanvasWidth,
+				smallBuildingCanvasHeight
+			 );
+			 
+			 // Initialize the larger building canvas dimensions and generate the canvas for these buildings:
+			 
+			 const largeBuildingCanvasWidth = 16;
+			 const largeBuildingCanvasHeight = 32;
+			 
+			 var largeBuildingCanvas = generateBuildingCanvas(
+				largeBuildingCanvasWidth,
+				largeBuildingCanvasHeight
+			 );
+			 
+			 // Number of sub-divisions to apply to our short building blocks. As an example, a value of 2 will
+			 // result in 2 block divisions and a total of 4 buildings assigned to each non-tall city block.
+			 const blockSubdivisions = 2;
+			 
+			 // This is our maximum building 'slice' deviation - i.e. whenever we have more than 1 building allocated
+			 // in one building block, we allow the building width / depth deviation between the buildings to vary
+			 // by this amount:
+			 const maxBuildingSliceDeviation = 20;
+			 
+			 // These are our city base heights
+			 const groundHeight = 30;
+			 const curbHeight = 1;
+			 
+			 // Tree properties
+			 const minTreeHeight = 4;
+			 const maxTreeHeight = 10;
+			 
+			 // Maps used to hold boolean indicators which show whether our grid coordinates represent a
+			 // ground or building block.
+			 var groundMap;
+			 var buildingMap;
+			 
+			 // Threshold value used to assign ground blocks. Any normalized values within the [0, 1] range that are
+			 // between [0, groundThreshold] get assigned to a ground block which can can either be a building block
+			 // or a park / parking block
+			 const groundThreshold = 0.85;
+			 
+			 // Threshold value used to assign park / parking blocks. Any normalized ground block values falling between the
+			 // [0, parkThreshold] range are assigned to a park or parking block.
+			 const parkThreshold = 0.2;
+			 
+			 // Generate and return a hexidecimal string representation of the numeric input
+			 // i.e. 0 will get converted to "#000000"
+			 function getHexadecimalString(number) {
+			   
+				var hexString = Number(number).toString(16);
+				hexString = "#000000".substr(0, 7 - hexString.length) + hexString;
+				return hexString;
+			   
+			 }
+			 
+			 // Generate a building canvas with the given width and height and return it
+			 function generateBuildingCanvas(width, height) {
+			   
+				// Build a small canvas we're going to use to create our window elements
+				var smallCanvas = document.createElement("canvas");
+			 
+				smallCanvas.width = width;
+				smallCanvas.height = height;
+			 
+				// Get a two-dimensional rendering context for our canvas
+				var context = smallCanvas.getContext("2d");
+			 
+				// Set the fill style to the same color as our building material
+				context.fillStyle = getHexadecimalString(colors.BUILDING);
+			 
+				// Draw a filled rectangle whose starting point is (0, 0) and whose size is specified by
+				// the width and height variables.
+				context.fillRect(0, 0, width, height);
+			 
+				// Set the building window dimensions
+				const windowWidth = 2;
+				const windowHeight = 1;
+			 
+				// Draw the building windows
+				for (var y = 4; y < height - 2; y += 3) {
+				   for (var x = 0; x < width; x += 3) {
+					  // Here, we add slight color variations to vary the look of each window
+					  var colorValue = Math.floor(Math.random() * 64);
+					  context.fillStyle =
+						 "rgb(" + [colorValue, colorValue, colorValue].join(",") + ")";
+			 
+					  // Draw the window / rectangle at the given (x, y) position using our defined window dimensions
+					  context.fillRect(x, y, windowWidth, windowHeight);
+				   }
+				}
+			 
+				// Create a large canvas and copy the small one onto it. We do this to increase our original canvas
+				// resolution:
+			 
+				var largeCanvas = document.createElement("canvas");
+			 
+				largeCanvas.width = 256;
+				largeCanvas.height = 512;
+			 
+				context = largeCanvas.getContext("2d");
+			 
+				// Disable the smoothing in order to avoid blurring our original one
+				context.imageSmoothingEnabled = false;
+				context.webkitImageSmoothingEnabled = false;
+				context.mozImageSmoothingEnabled = false;
+			 
+				// Copy the smaller canvas onto the larger one
+				context.drawImage(smallCanvas, 0, 0, largeCanvas.width, largeCanvas.height);
+			 
+				return largeCanvas;
+			   
+			 }
+			 
+			  // Fetch a value from our 2D perlin noise map and return it
+			 function getNoiseValue(x, y, frequency) {
+				return Math.abs(noise.perlin2(x / frequency, y / frequency));
+			 }
+			  
+			 // Return a normalized version of the input array which maps the array elements to a range between 0 and 1
+			 function normalizeArray(array) {
+			   
+				var minValue = Math.min.apply(Math, array);
+				var maxValue = Math.max.apply(Math, array);
+			 
+				// Apply the function below to each array element (to generate a normalized value between 0 and 1)
+				return array.map(function (value) {
+				   return (value - minValue) / (maxValue - minValue);
+				});
+			   
+			 }
+			 
+			  // Split a 1-D array into a 2-D array containing the specified number of columns in each sub-array.
+			 function generate2DArray(array, numberOfColumns) {
+			   
+				var temp = array.slice(0);
+				var results = [];
+			 
+				while (temp.length) {
+				   results.push(temp.splice(0, numberOfColumns));
+				}
+			 
+				return results;
+			   
+			 }
+			 
+			 // Create a box mesh with the given geometry, material and color. The cast shadow parameter is a
+			 // boolean flag which controls whether we want our mesh to cast a shadow.
+			 function getBoxMesh(boxGeometryParameters, position, color, castShadow) {
+			   
+				// Check if the shadow parameter was provided. If not, initialize it to true
+				if (typeof castShadow === "undefined") castShadow = true;
+			 
+				// Use lambert mesh material which is made for non-shiny surfaces / is generally great for performance
+				const material = new THREE.MeshLambertMaterial({
+				   color: color
+				});
+			 
+				// Create a box geometry ( made for rectangular shapes ) with the given width, height, and depth parameters
+				const geometry = new THREE.BoxGeometry(
+				   boxGeometryParameters.width,
+				   boxGeometryParameters.height,
+				   boxGeometryParameters.depth
+				);
+			 
+				// Generate the mesh and return it
+			 
+				const mesh = new THREE.Mesh(geometry, material);
+			 
+				mesh.position.set(position.x, position.y, position.z);
+			 
+				mesh.receiveShadow = true;
+				mesh.castShadow = castShadow;
+			 
+				return mesh;
+			   
+			 }
+			 
+			 // Create a mesh we're going to use to model our water elements
+			 function getWaterMesh(boxGeometryParameters, position) {
+			   
+				// Check if the position was provided. If not, initialize it to (0, 0, 0)
+				if (typeof position === "undefined") position = {
+				   x: 0,
+				   y: 0,
+				   z: 0
+				};
+			 
+				// Use a mesh phong meterial, which can be used for shiny surfaces with specular highlights
+				const material = new THREE.MeshPhongMaterial({
+				   color: colors.WATER,
+				   transparent: true,
+				   opacity: 0.6
+				});
+			 
+				// Create a box geometry ( made for rectangular shapes ) with the appropriate dimensions
+				const geometry = new THREE.BoxGeometry(
+				   boxGeometryParameters.width,
+				   boxGeometryParameters.height,
+				   boxGeometryParameters.depth
+				);
+			 
+				// Generate and return the mesh
+			 
+				const mesh = new THREE.Mesh(geometry, material);
+			 
+				mesh.position.set(position.x, position.y, position.z);
+			 
+				mesh.receiveShadow = false;
+				mesh.castShadow = false;
+			 
+				return mesh;
+			   
+			 }
+			 
+			 // Return true if the grid block located at (x, z) is a ground block; and false if
+			 // it's a water block
+			 function isGroundBlock(x, z) {
+				return groundMap[x][z];
+			 }
+			 
+			 // Translate the grid x coordinate into a THREE.js scene x coordinate and return it
+			 function getSceneXCoordinate(x) {
+				return x * blockSize + blockSize / 2 - getCityWidth() / 2;
+			   
+			 }
+			 
+			 // Translate the grid z coordinate into a THREE.js scene z coordinate and return it
+			 function getSceneZCoordinate(z) { 
+				return z * blockSize + blockSize / 2 - getCityLength() / 2;
+			 }
+			 
+			 // Take a list of meshes, merge their geometries into a single one and return it
+			 function getMergedMesh(meshList, material) {
+			   
+				// Check if the mesh material was provided, and if not, initialize it contain the same material as the
+				// first item in our list of meshes we want to merge
+				if (typeof material === "undefined") material = meshList[0].material;
+			 
+				// Create a geometry object to hold our combined geometries
+				var geometry = new THREE.Geometry();
+			 
+				// Merge all of the meshes into one geometry:
+				for (var i = 0; i < meshList.length; i++) {
+				   meshList[i].updateMatrix();
+				   geometry.merge(meshList[i].geometry, meshList[i].matrix);
+				}
+			 
+				// Once we have our merged geometry, create a mesh from it
+				var mergedMesh = new THREE.Mesh(geometry, material);
+			 
+				// We want our merged mesh to cast and receive shadows
+				mergedMesh.castShadow = true;
+				mergedMesh.receiveShadow = true;
+			 
+				return mergedMesh;
+			   
+			 }
+			 
+			 // Return true if the grid block located at (x, z) is a building block; and false if
+			 // it's a block allocated for park / parking blocks.
+			 function isBuildingBlock(x, z) {
+				return buildingMap[x][z];
+			 }
+			 
+			 // Return the total amount of building blocks surrounding the block located at (x, z)
+			 // on our grid. This is used to heuristically determine whether to build a park or
+			 // parking in our city. We want parking to be located closer to our buildings, so we
+			 // check to see the surrounding building count prior to deciding what to build.
+			 function getSurroundingBuildingNumber(x, z) {
+			   
+				var buildingCount = 0;
+			 
+				for (var i = Math.max(0, x - 1); i <= Math.min(x + 1, gridSize - 1); i++) {
+				   for (var j = Math.max(0, z - 1); j <= Math.min(z + 1, gridSize - 1); j++) {
+					  if (isBuildingBlock(i, j)) buildingCount = buildingCount + 1;
+				   }
+				}
+			 
+				return buildingCount;
+			   
+			 }
+			 
+			 // Generate trees centered within our scene (x, z) coordiante and laying within the given
+			 // park size parameter
+			 function generateTrees(x, z, parkSize) {
+			   
+				var trees = [];
+			 
+				// Generate a random number from [0 -> maximum tree density] to allocate to this park block
+				var numberOfTrees = getRandomIntBetween(0, maximumTreeDensity);
+			 
+				// Generate the park tree elements
+				for (var i = 0; i < numberOfTrees; i++) {
+				   // Generate a random (x, z) coordinate for our tree and generate the tree
+			 
+				   var tree_x_coord = getRandomIntBetween(x - parkSize / 2, x + parkSize / 2);
+				   var tree_z_coord = getRandomIntBetween(z - parkSize / 2, z + parkSize / 2);
+			 
+				   // Generate a tree at the generated (x, z) coordiante and it to our array of trees
+				   const tree = new Tree(tree_x_coord, tree_z_coord);
+				   trees.push(tree.getMergedMesh());
+				}
+			 
+				// Merge the generated tree meshes and add them to the scene
+				if (trees.length) scene.add(getMergedMesh(trees));
+			   
+			 }
+			 
+			  // Return a random integer between min (inclusive) and max (exclusive)
+			 function getRandomIntBetween(min, max) {
+			   
+				min = Math.ceil(min);
+				max = Math.floor(max);
+				return Math.floor(Math.random() * (max - min + 1)) + min;
+			   
+			 }
+			 
+			 // Generate a tree on the scene (x, y) coordinate
+			 var Tree = function (x, z) {
+			   
+				// Array we use to hold the components which compose the tree
+				this.components = [];
+			 
+				// Generate a random height for our tree
+				var treeHeight = getRandomIntBetween(minTreeHeight, maxTreeHeight);
+			 
+				var trunkMesh = getBoxMesh(
+				   // Geometry parameters
+				   {
+					  width: 2,
+					  height: treeHeight,
+					  depth: 2
+				   },
+				   // Positional parameters
+				   {
+					  x: x,
+					  y: treeHeight / 2 + curbHeight,
+					  z: z
+				   }, // Mesh color
+				   colors.DARK_BROWN
+				);
+			 
+				var branchMesh = getCylinderMesh(
+				   // Mesh color
+				   colors.TREE,
+				   // Geometry parameters
+				   {
+					  radiusTop: 0,
+					  radiusBottom: 5,
+					  height: maxTreeHeight * 1.5
+				   },
+				   // Positional parameters
+				   {
+					  x: x,
+					  y: treeHeight + curbHeight + 5,
+					  z: z
+				   }
+				);
+			 
+				// Rotate the tree in a random direction
+				branchMesh.rotation.y = Math.random();
+			 
+				// Add the branch / trunk to the tree components list
+				this.components.push(branchMesh, trunkMesh);
+			 
+				// Function which merges the tree branch and trunk components and returns them
+				this.getMergedMesh = function () {
+				   return getMergedMesh(this.components);
+				};
+			   
+			 };
+			 
+			 // Create a cylinder mesh and return it
+			 function getCylinderMesh(color, cylinderGeometryParameters, position) {
+			   
+				// We set default values to some of our cylinder geometry parameters if they're undefined
+			 
+				if (cylinderGeometryParameters.radialSegments === "undefined")
+				   cylinderGeometryParameters.radialSegments = 4;
+				if (cylinderGeometryParameters.heightSegments === "undefined")
+				   cylinderGeometryParameters.heightSegments = 1;
+			 
+				// Use lambert mesh material which is made for non-shiny surfaces / great for performance
+				const material = new THREE.MeshLambertMaterial({
+				   color: color
+				});
+			 
+				// Create a box geometry ( made for rectangular shapes ) with the given width, height, and depth parameters
+				const geometry = new THREE.CylinderGeometry(
+				   cylinderGeometryParameters.radiusTop,
+				   cylinderGeometryParameters.radiusBottom,
+				   cylinderGeometryParameters.height,
+				   cylinderGeometryParameters.radialSegments,
+				   cylinderGeometryParameters.heightSegments
+				);
+			 
+				// Generate the new mesh and return it
+			 
+				const mesh = new THREE.Mesh(geometry, material);
+			 
+				mesh.position.set(position.x, position.y, position.z);
+			 
+				mesh.rotation.y = Math.PI / 4;
+			 
+				mesh.receiveShadow = true;
+				mesh.castShadow = true;
+			 
+				return mesh;
+			   
+			 }
+			 
+			 // Generate a building block which holds the input geometry / position parameters and sub-divide
+			 // it by the 'numOfDivisions' assigned. The last buildings parameter is an array holding the
+			 // generated buildings created and assigned to this block.
+			 function generateBuildingBlock(
+				geometryParameters,
+				position,
+				numOfDivisions,
+				buildings
+			 ) {
+				// If the building is tall or if we have less than 1 sub-division to generate, create a building
+				if (isTall(geometryParameters.height) || numOfDivisions < 1) {
+				   // Generate a randomized maximum height deviation to use for our building
+				   var maxHeightDeviation = generateBuildingHeightDeviation();
+			 
+				   // Generate a random building height falling within our generated deviation
+				   var buildingHeight = getRandomIntBetween(
+					  geometryParameters.height - maxHeightDeviation,
+					  geometryParameters.height + maxHeightDeviation
+				   );
+			 
+				   // Generate the geometry and position maps to use when constructing our building
+			 
+				   var buildingGeometryParameters = {
+					  width: geometryParameters.width,
+					  height: buildingHeight,
+					  depth: geometryParameters.depth
+				   };
+			 
+				   var buildingPosition = {
+					  x: position.x,
+					  y: buildingGeometryParameters.height / 2 + curbHeight,
+					  z: position.z
+				   };
+			 
+				   // Generate a new building with the assigned position and geometry and add it to our
+				   // array of buildings
+				   var building = new Building(buildingGeometryParameters, buildingPosition);
+				   buildings.push(building.getMergedMesh());
+			 
+				   // Calculate the amount of buildings we've already generated
+				   var totalBuildingsBuilt = buildings.length;
+			 
+				   // Calculate the total number of buildings we're targeting to build (according to the amount of
+				   // sub-divisions assigned to our block)
+				   var totalBuildingsToBuild = Math.pow(2, blockSubdivisions);
+			 
+				   // If our block has no more buildings which need to be built, or if our building qualifies as
+				   // being a tall structure, we're done and we can merge the building mesh and add it to the scene
+				   if (
+					  totalBuildingsBuilt >= totalBuildingsToBuild ||
+					  isTall(buildingGeometryParameters.height)
+				   ) {
+					  scene.add(getMergedMesh(buildings));
+				   }
+				  
+				} else {
+				  
+				   // Otherwise, we sub-divide our block into different components and generate a building whithin
+				   // each sub component block
+			 
+				   // Generate a randomized block 'slice' deviation to use
+				   var sliceDeviation = Math.abs(
+					  getRandomIntBetween(0, maxBuildingSliceDeviation)
+				   );
+			 
+				   // If our geometry depth is larger than our width, we slice the depth dimension in 2 and generate
+				   // 2 sub-divisions / building elements spread across our depth dimension
+				   if (geometryParameters.width <= geometryParameters.depth) {
+					  // Calculate the new depth geometry parameters we need to use to sub-divide this block
+					  var depth1 =
+						 Math.abs(geometryParameters.depth / 2 - sliceDeviation) -
+						 blockMargin / 2;
+					  var depth2 =
+						 Math.abs(-(geometryParameters.depth / 2) - sliceDeviation) -
+						 blockMargin / 2;
+			 
+					  // Calculate the new z coordinates we're going to use for our sub-division
+					  var z1 =
+						 position.z +
+						 sliceDeviation / 2 +
+						 geometryParameters.depth / 4 +
+						 blockMargin / 4;
+					  var z2 =
+						 position.z +
+						 sliceDeviation / 2 -
+						 geometryParameters.depth / 4 -
+						 blockMargin / 4;
+			 
+					  // Recursively generate the new sub-divided block elements and add them to the scene
+			 
+					  generateBuildingBlock(
+						 // Building geometry parameters
+						 {
+							width: geometryParameters.width,
+							height: geometryParameters.height,
+							depth: depth1
+						 },
+						 // Building position
+						 {
+							x: position.x,
+							z: z1
+						 },
+						 // Decrement the total number of sub-divisions we need to perform
+						 numOfDivisions - 1,
+						 buildings
+					  );
+			 
+					  generateBuildingBlock(
+						 // Building geometry parameters
+						 {
+							width: geometryParameters.width,
+							height: geometryParameters.height,
+							depth: depth2
+						 },
+						 // Building position
+						 {
+							x: position.x,
+							z: z2
+						 },
+						 // Decrement the total number of sub-divisions we need to perform
+						 numOfDivisions - 1,
+						 buildings
+					  );
+					 
+				   } else {
+					 
+					  // Slice the width dimension in 2 and generate 2 sub-divisions / building elements spread across our
+					  // width dimension
+			 
+					  // Calculate the new width geometry parameters we need to use to sub-divide this block
+					  var width1 =
+						 Math.abs(geometryParameters.width / 2 - sliceDeviation) -
+						 blockMargin / 2;
+					  var width2 =
+						 Math.abs(-(geometryParameters.width / 2) - sliceDeviation) -
+						 blockMargin / 2;
+			 
+					  // Calculate the new x coordinates to use as part of our positional parameters
+					  var x1 =
+						 position.x +
+						 sliceDeviation / 2 +
+						 geometryParameters.width / 4 +
+						 blockMargin / 4;
+					  var x2 =
+						 position.x +
+						 sliceDeviation / 2 -
+						 geometryParameters.width / 4 -
+						 blockMargin / 4;
+			 
+					  // Recursively generate the new sub-divided block elements and add them to the scene
+			 
+					  generateBuildingBlock(
+						 // Building geometry parameters
+						 {
+							width: width1,
+							height: geometryParameters.height,
+							depth: geometryParameters.depth
+						 },
+						 // Building position
+						 {
+							x: x1,
+							z: position.z
+						 },
+						 // Decrement the total number of sub-divisions we need to perform
+						 numOfDivisions - 1,
+						 buildings
+					  );
+			 
+					  generateBuildingBlock(
+						 // Building geometry parameters
+						 {
+							width: width2,
+							height: geometryParameters.height,
+							depth: geometryParameters.depth
+						 },
+						 // Building position
+						 {
+							x: x2,
+							z: position.z
+						 },
+						 // Decrement the total number of sub-divisions we need to perform
+						 numOfDivisions - 1,
+						 buildings
+					  );
+				   }
+				}
+			 }
+			 
+			 // Returns true if the input height parameter qualifies a scructure or building as being 'tall' and
+			 // false otherwise. To generate this value, we generally use a 'tall percentage cutoff' thershold which
+			 // uses our maximum building height in order to make the proper assignment.
+			 function isTall(height) {
+				return Math.round(height / maxBuildingHeight * 100) >= tallPercentageCutoff;
+			 }
+			 
+			 // Generate a random building height deviation value and return it. We use this to vary the
+			 // building dimensions within the same block element.
+			 function generateBuildingHeightDeviation() {
+			   
+				return getRandomIntBetween(0, maxBuildingHeightDeviation);
+			   
+			 }
+			 
+			 // Create a new building element with the specified geometry / position parameters
+			 var Building = function (geometryParameters, position) {
+			   
+				// Array used to hold the building components
+				this.components = [];
+			 
+				// Generate a new mesh for out building and add it to our components array
+				const buildingMesh = getBuildingMesh(geometryParameters, position, colors.BUILDING);
+				this.components.push(buildingMesh);
+			 
+				// Function which merges the building components and returns them
+				this.getMergedMesh = function () {
+				   return getMergedMesh(this.components);
+				};
+			   
+			 };
+			 
+			 // Create a mesh we're going to use for our buildings
+			 function getBuildingMesh(boxGeometryParameters, position, color) {
+			   
+				// Use lambert mesh material which is made for non-shiny surfaces / is generally great for performance
+				var sideBuildingMaterial = new THREE.MeshLambertMaterial({
+				   color: color,
+				   // Check if our building qualifies as being tall, and if it does, use the large building canvas,
+				   // otherwise, we use the small one
+				   map: new THREE.Texture(
+					  isTall(boxGeometryParameters.height) ?
+					  largeBuildingCanvas :
+					  smallBuildingCanvas
+				   )
+				});
+			 
+				// We need to flag our side textures as needing an update, since we're using different canvas elements
+				// for this material
+				sideBuildingMaterial.map.needsUpdate = true;
+			 
+				// We use a regular non-textured lambert mesh for our top / bottom faces
+				var topBottomMaterial = new THREE.MeshLambertMaterial({
+				   color: color
+				});
+			 
+				// Set the materials we're going to use for each building side separately
+				var materials = [
+				   sideBuildingMaterial, // Left side
+				   sideBuildingMaterial, // Right side
+				   topBottomMaterial, // Top side
+				   topBottomMaterial, // Bottom side
+				   sideBuildingMaterial, // From side
+				   sideBuildingMaterial // Back side
+				];
+			 
+				// Create a box geometry ( made for rectangular shapes ) with the given width, height, and depth parameters
+				const geometry = new THREE.BoxGeometry(
+				   boxGeometryParameters.width,
+				   boxGeometryParameters.height,
+				   boxGeometryParameters.depth
+				);
+			 
+				// Create the building mesh and return it
+			 
+				const mesh = new THREE.Mesh(geometry, materials);
+			 
+				mesh.position.set(position.x, position.y, position.z);
+			 
+				mesh.receiveShadow = true;
+				mesh.castShadow = true;
+			 
+				return mesh;
+			   
+			 }
+			 
+			 const cloneGltf = (gltf) => {
+				  const clone = {
+					animations: gltf.animations,
+					scene: gltf.scene.clone(true)
+				  };
+
+				  const skinnedMeshes = {};
+
+				  gltf.scene.traverse(node => {
+					if (node.isSkinnedMesh) {
+					  skinnedMeshes[node.name] = node;
+					}
+				  });
+
+				  const cloneBones = {};
+				  const cloneSkinnedMeshes = {};
+
+				  clone.scene.traverse(node => {
+					if (node.isBone) {
+					  cloneBones[node.name] = node;
+					}
+
+					if (node.isSkinnedMesh) {
+					  cloneSkinnedMeshes[node.name] = node;
+					}
+				  });
+
+				  for (let name in skinnedMeshes) {
+					const skinnedMesh = skinnedMeshes[name];
+					const skeleton = skinnedMesh.skeleton;
+					const cloneSkinnedMesh = cloneSkinnedMeshes[name];
+
+					const orderedCloneBones = [];
+
+					for (let i = 0; i < skeleton.bones.length; ++i) {
+					  const cloneBone = cloneBones[skeleton.bones[i].name];
+					  orderedCloneBones.push(cloneBone);
+					}
+
+					cloneSkinnedMesh.bind(
+						new THREE.Skeleton(orderedCloneBones, skeleton.boneInverses),
+						cloneSkinnedMesh.matrixWorld);
+				  }
+
+				  return clone;
+				}
+			 
+			 
+			 
+			 
+			 
+			
+			/////////////////////////////////////////////////////////////////////////////
+			/////////////////////////////////////////////////////////////////////////////
+			/////////////////////////////////////////////////////////////////////////////
+			/////////////////////////////////////////////////////////////////////////////
+			/////////////////////////////////////////////////////////////////////////////
+			/////////////////////////////////////////////////////////////////////////////
+			/////////////////////////////////////////////////////////////////////////////
+			
+			let scene, renderer, camera, stats, controls;
+			let skeleton, clock;
+			let model, mixer;
+			
+			var n_personas = 100;
+			var all_models = [];
+			var all_mixers = [];
+			var all_actions = [];
+			var all_base_actions = [];
+			var all_additive_actions = [];
+			
+			const ninety_radians = (90 * (Math.PI / 180));
+			const hundred_eighty_radians = (180 * (Math.PI / 180));
+
+			const crossFadeControls = [];
+
+			const default_action = 'walk';
+			let currentBaseAction = default_action;
+			var all_current_base_action = [];
+			var allActions = [];
+			var baseActions = {};
+			var additiveActions = {};
+			let panelSettings, numAnimations;
+
+			/////////////////////////////////////////////////////////////////////////////////////////////////////
+			/////////////////////////////////////////////////////////////////////////////////////////////////////
+			
+			
+			//setTimeout(turnLeft, 3000);
+			/*
+			setTimeout(function() {
+				startWalking(1);
+			}, 3000);
+			*/
+			/*
+			setTimeout(function() {
+				startWalking(1);
+			}, 4000);
+			*/
+			
+			function startWalking(i) {
+				//currentBaseAction = "walk";
+				all_current_base_action[i] = "walk";
+				executeCrossFade(all_actions[i][3], all_actions[i][6], 0.35);
+				//executeCrossFade(allActions[3], allActions[6], 0.35);
+			}
+			
+			function startRunning(i) {
+				//currentBaseAction = "run";
+				all_current_base_action[i] = "run";
+				executeCrossFade(all_actions[i][6], all_actions[i][3], 0.35);
+				//executeCrossFade(allActions[6], allActions[3], 0.35);
+			}
+			
+			function turnLeft() {
+				turn_left = true;
+			}
+			/////////////////////////////////////////////////////////////////////////////////////////////////////
+			/////////////////////////////////////////////////////////////////////////////////////////////////////
+			
+			init();
+			
+
+			function init() {
+
+				const container = document.getElementById( 'container' );
+				clock = new THREE.Clock();
+
+				scene = new THREE.Scene();
+				scene.background = new THREE.Color( 0xa0a0a0 );
+				//scene.fog = new THREE.Fog( 0xa0a0a0, 10, 50 );
+
+				const hemiLight = new THREE.HemisphereLight( 0xffffff, 0x444444 );
+				hemiLight.position.set( 0, 20, 0 );
+				scene.add( hemiLight );
+
+				const dirLight = new THREE.DirectionalLight( 0xffffff );
+				dirLight.position.set( 3, 10, 10 );
+				dirLight.castShadow = true;
+				dirLight.shadow.camera.top = 2;
+				dirLight.shadow.camera.bottom = - 2;
+				dirLight.shadow.camera.left = - 2;
+				dirLight.shadow.camera.right = 2;
+				dirLight.shadow.camera.near = 0.1;
+				dirLight.shadow.camera.far = 40;
+				scene.add( dirLight );
+
+				// ground
+
+				const mesh = new THREE.Mesh( new THREE.PlaneGeometry( 100, 100 ), new THREE.MeshPhongMaterial( { color: 0x999999, depthWrite: false } ) );
+				mesh.rotation.x = - Math.PI / 2;
+				mesh.receiveShadow = true;
+				scene.add( mesh );
+
+				const loader = new GLTFLoader();
+				
+				loader.load( 'models/gltf/Xbot.glb', function ( gltf ) {
+
+					for (var p=0; p < n_personas; p++){
+					
+						all_current_base_action.push(default_action);
+						
+						allActions = [];
+						baseActions = {
+							idle: { weight: 0 },
+							walk: { weight: 1 },
+							run: { weight: 0 }
+						};
+						all_base_actions.push(baseActions);
+
+						additiveActions = {
+							sneak_pose: { weight: 0 },
+							sad_pose: { weight: 0 },
+							agree: { weight: 0 },
+							headShake: { weight: 0 }
+						};
+						all_additive_actions.push(additiveActions);
+						
+						/////////////////////////////////////////////////////////////////////////
+						/////////////////////////////////////////////////////////////////////////
+					
+						var new_gltf = cloneGltf(gltf);
+						new_gltf.scene.scale.set(5, 5, 5);
+						model = new_gltf.scene;
+						var n_temp = getRandomIntBetween(0,1);
+						if (n_temp < 0.5) model.rotation.y = 0;
+						else model.rotation.y = ninety_radians;
+						
+						model.position.y = 1;
+						model.position.x = getRandomIntBetween(-500,500);
+						model.position.z = getRandomIntBetween(-500,500);						
+						scene.add(model);
+						
+						model.traverse( function ( object ) {
+
+							if ( object.isMesh ) object.castShadow = true;
+
+						} );
+						
+						const animations = gltf.animations;
+						mixer = new THREE.AnimationMixer( model );
+						
+						numAnimations = animations.length;
+						
+						for ( let i = 0; i !== numAnimations; ++ i ) {
+
+							let clip = animations[ i ];
+							const name = clip.name;
+
+							if ( baseActions[ name ] ) {
+
+								const action = mixer.clipAction( clip );
+								activateAction( action , p);
+								all_base_actions[p][ name ].action = action;
+								//baseActions[ name ].action = action;
+								allActions.push( action );
+
+							} else if ( additiveActions[ name ] ) {
+
+								// Make the clip additive and remove the reference frame
+
+								THREE.AnimationUtils.makeClipAdditive( clip );
+
+								if ( clip.name.endsWith( '_pose' ) ) {
+
+									clip = THREE.AnimationUtils.subclip( clip, clip.name, 2, 3, 30 );
+
+								}
+
+								const action = mixer.clipAction( clip );
+								activateAction( action, p );
+								//additiveActions[ name ].action = action;
+								all_additive_actions[p][ name ].action = action;
+								allActions.push( action );
+
+							}
+						}
+						
+						all_actions.push(allActions);
+						
+						all_mixers.push(mixer);
+						all_models.push(model);
+					}
+					
+					//createPanel();
+
+					animate();
+
+				} );
+				
+				generatePreceduralMaps();
+				generateCityTerrain();
+				generateGroundBlocks();
+
+				renderer = new THREE.WebGLRenderer( { antialias: true } );
+				renderer.setPixelRatio( window.devicePixelRatio );
+				renderer.setSize( window.innerWidth, window.innerHeight );
+				renderer.outputEncoding = THREE.sRGBEncoding;
+				renderer.shadowMap.enabled = true;
+				container.appendChild( renderer.domElement );
+
+				// camera
+				camera = new THREE.PerspectiveCamera( 60, window.innerWidth / window.innerHeight, 1, 4000 );
+				camera.position.set(30, 30, 30);
+				//camera.position.set( - 1, 2, 3 );
+
+				controls = new OrbitControls( camera, renderer.domElement );
+				controls.enableDamping = true;
+				controls.dampingFactor = 0.25;
+				//controls.enablePan = true;
+				//controls.enableZoom = true;
+				controls.zoomSpeed = 0.5;
+				controls.target.set( 0, 1, 0 );
+				controls.maxPolarAngle = Math.PI / 2;
+				controls.update();
+
+				stats = new Stats();
+				container.appendChild( stats.dom );
+
+				window.addEventListener( 'resize', onWindowResize );
+
+			}
+
+			function createPanel() {
+
+				const panel = new GUI( { width: 310 } );
+
+				const folder1 = panel.addFolder( 'Base Actions' );
+				const folder2 = panel.addFolder( 'Additive Action Weights' );
+				const folder3 = panel.addFolder( 'General Speed' );
+
+				panelSettings = {
+					'modify time scale': 1.0
+				};
+
+				const baseNames = [ 'None', ...Object.keys( baseActions ) ];
+
+				for ( let i = 0, l = baseNames.length; i !== l; ++ i ) {
+
+					const name = baseNames[ i ];
+					const settings = baseActions[ name ];
+					panelSettings[ name ] = function () {
+
+						const currentSettings = baseActions[ currentBaseAction ];
+						const currentAction = currentSettings ? currentSettings.action : null;
+						const action = settings ? settings.action : null;
+
+						prepareCrossFade( currentAction, action, 0.35 );
+
+					};
+
+					crossFadeControls.push( folder1.add( panelSettings, name ) );
+
+				}
+
+				for ( const name of Object.keys( additiveActions ) ) {
+
+					const settings = additiveActions[ name ];
+
+					panelSettings[ name ] = settings.weight;
+					folder2.add( panelSettings, name, 0.0, 1.0, 0.01 ).listen().onChange( function ( weight ) {
+
+						setWeight( settings.action, weight );
+						settings.weight = weight;
+
+					} );
+
+				}
+
+				folder3.add( panelSettings, 'modify time scale', 0.0, 1.5, 0.01 ).onChange( modifyTimeScale );
+
+				folder1.open();
+				folder2.open();
+				folder3.open();
+
+				crossFadeControls.forEach( function ( control ) {
+
+					control.setInactive = function () {
+
+						control.domElement.classList.add( 'control-inactive' );
+
+					};
+
+					control.setActive = function () {
+
+						control.domElement.classList.remove( 'control-inactive' );
+
+					};
+
+					const settings = baseActions[ control.property ];
+
+					if ( ! settings || ! settings.weight ) {
+
+						control.setInactive();
+
+					}
+
+				} );
+
+			}
+
+			function activateAction( action, i ) {
+
+				const clip = action.getClip();
+				//const settings = baseActions[ clip.name ] || additiveActions[ clip.name ];
+
+				//console.log(all_base_actions[i][ clip.name ]);
+				//console.log(all_additive_actions[i][ clip.name ]);
+				
+				const settings = all_base_actions[i][ clip.name ] || all_additive_actions[i][ clip.name ];
+				setWeight( action, settings.weight );
+				action.play();
+			}
+
+			function modifyTimeScale( speed ) {
+
+				mixer.timeScale = speed;
+
+			}
+
+			function prepareCrossFade( startAction, endAction, duration ) {
+
+				// If the current action is 'idle', execute the crossfade immediately;
+				// else wait until the current action has finished its current loop
+
+				if ( currentBaseAction === 'idle' || ! startAction || ! endAction ) {
+
+					executeCrossFade( startAction, endAction, duration );
+
+				} else {
+
+					synchronizeCrossFade( startAction, endAction, duration );
+
+				}
+
+				// Update control colors
+
+				if ( endAction ) {
+
+					const clip = endAction.getClip();
+					currentBaseAction = clip.name;
+
+				} else {
+
+					currentBaseAction = 'None';
+
+				}
+
+				crossFadeControls.forEach( function ( control ) {
+
+					const name = control.property;
+
+					if ( name === currentBaseAction ) {
+
+						control.setActive();
+
+					} else {
+
+						control.setInactive();
+
+					}
+
+				} );
+
+			}
+
+			function synchronizeCrossFade( startAction, endAction, duration ) {
+
+				mixer.addEventListener( 'loop', onLoopFinished );
+
+				function onLoopFinished( event ) {
+
+					if ( event.action === startAction ) {
+
+						mixer.removeEventListener( 'loop', onLoopFinished );
+
+						executeCrossFade( startAction, endAction, duration );
+
+					}
+
+				}
+
+			}
+
+			function executeCrossFade( startAction, endAction, duration) {
+
+				// Not only the start action, but also the end action must get a weight of 1 before fading
+				// (concerning the start action this is already guaranteed in this place)
+
+				if ( endAction ) {
+
+					setWeight( endAction, 1 );
+					endAction.time = 0;
+
+					if ( startAction ) {
+
+						// Crossfade with warping
+
+						startAction.crossFadeTo( endAction, duration, true );
+
+					} else {
+
+						// Fade in
+
+						endAction.fadeIn( duration );
+
+					}
+
+				} else {
+
+					// Fade out
+
+					startAction.fadeOut( duration );
+
+				}
+
+			}
+
+			// This function is needed, since animationAction.crossFadeTo() disables its start action and sets
+			// the start action's timeScale to ((start animation's duration) / (end animation's duration))
+
+			function setWeight( action, weight ) {
+
+				action.enabled = true;
+				action.setEffectiveTimeScale( 1 );
+				action.setEffectiveWeight( weight );
+
+			}
+
+			function onWindowResize() {
+
+				camera.aspect = window.innerWidth / window.innerHeight;
+				camera.updateProjectionMatrix();
+
+				renderer.setSize( window.innerWidth, window.innerHeight );
+
+			}
+			
+			const walk_speed = 0.13
+			const run_speed = 0.25
+			
+			var steps = 50;
+			var increment_walk = walk_speed/steps;
+			var increment_rot = ninety_radians/steps;
+			
+			var delta_z = walk_speed;
+			var delta_x = 0.0;
+			
+			var turn_left = false;
+
+			function walk_and_run(element, index, array){
+				
+				if (element.rotation.y == 0){
+					if (all_current_base_action[index] == "walk"){
+						element.position.z += walk_speed;
+					}
+					if (all_current_base_action[index] == "run"){
+						element.position.z += run_speed;
+					}
+				}
+				if (element.rotation.y == ninety_radians){
+					if (all_current_base_action[index] == "walk"){
+						element.position.x += walk_speed;
+					}
+					if (all_current_base_action[index] == "run"){
+						element.position.x += run_speed;
+					}
+				}
+				if (element.rotation.y == -ninety_radians){
+					if (all_current_base_action[index] == "walk"){
+						element.position.x -= walk_speed;
+					}
+					if (all_current_base_action[index] == "run"){
+						element.position.x -= run_speed;
+					}
+				}
+				if (element.rotation.y == -hundred_eighty_radians){
+					if (all_current_base_action[index] == "walk"){
+						element.position.z -= walk_speed;
+					}
+					if (all_current_base_action[index] == "run"){
+						element.position.z -= run_speed;
+					}
+				}
+				
+			}
+			
+			function animate() {
+
+				// Render loop
+
+				requestAnimationFrame( animate );
+
+				/*
+				for ( let i = 0; i !== numAnimations; ++ i ) {
+
+					const action = allActions[ i ];
+					const clip = action.getClip();
+					const settings = baseActions[ clip.name ] || additiveActions[ clip.name ];
+					settings.weight = action.getEffectiveWeight();
+
+				}
+				*/
+				
+				/*
+				// put this into a funtion
+				if (turn_left){
+					if (model.rotation.y < ninety_radians){
+						model.rotation.y += increment_rot;
+						
+						if (delta_z > 0){
+							model.position.z += delta_z;
+							delta_z -= increment_walk;
+						}
+						
+						
+						if (delta_x < walk_speed){
+							model.position.x += delta_x;
+							delta_x += increment_walk;
+						}
+					}else{
+						model.rotation.y = ninety_radians;
+						turn_left = false;
+					}
+				}
+				*/
+					
+				
+				all_models.forEach(walk_and_run);
+				
+				// Get the time elapsed since the last frame, used for mixer update
+
+				const mixerUpdateDelta = clock.getDelta();
+
+				// Update the animation mixer, the stats panel, and render this frame
+
+				//mixer.update( mixerUpdateDelta );
+				for(var i=0;i<n_personas;i++){
+					all_mixers[i].update( mixerUpdateDelta );
+				}
+
+				//stats.update();
+
+				renderer.render( scene, camera );
+
+				controls.update();
+			}
+
+			function generatePreceduralMaps() {
+   
+				noise.seed(Math.random());
+			 
+				// Noise frequency values we're using to generate our block distribution. The higher the value, the smoother the
+				// distribution:
+			 
+				// This is the general noise distribution used for the ground / water block assignments
+				var generalNoiseFrequency = 15;
+			 
+				// This is the ground noise distribution used for the building / park / parking block assignments
+				var groundNoiseFrequency = 8;
+			 
+				// Arrays to use in order to hold our generated noise values
+				var generalNoiseDistribution = [];
+				var groundNoiseDistribution = [];
+			 
+				// Generate the ground / general noise arrays holding the perlin noise distribution
+				for (var i = 0; i < gridSize; i++) {
+				   for (var j = 0; j < gridSize; j++) {
+					  generalNoiseDistribution.push(getNoiseValue(i, j, generalNoiseFrequency));
+					  groundNoiseDistribution.push(getNoiseValue(i, j, groundNoiseFrequency));
+				   }
+				}
+			 
+				// Generate a normalized noise array which holds a range of values between [0, 1]
+				var normalizedDistribution = normalizeArray(generalNoiseDistribution);
+			 
+				// Map our noises to an binary array which serves as an indicator showing whether the array element is a
+				// ground block or a water block
+				var groundDistributionMap = normalizedDistribution.map(function (arrayValue) {
+				   return arrayValue <= groundThreshold ? true : false;
+				});
+			 
+				// Transform the 1-D ground mapping into a 2-D array with (x, z) coordinates
+				groundMap = generate2DArray(groundDistributionMap, gridSize);
+			 
+				// Generate a normalized array for our ground distribution
+				var normalizedGroundDistribution = normalizeArray(groundNoiseDistribution);
+			 
+				// Map our noises to an array holding binary values which indicate whether it's a building or a park block
+				var buildingDistributionMap = normalizedGroundDistribution.map(function (
+				   arrayValue,
+				   index
+				) {
+				   return groundDistributionMap[index] && arrayValue > parkThreshold ?
+					  true :
+					  false;
+				});
+			 
+				// Transform the 1-D building mapping into a 2-D array with (x, z) coordinates
+				buildingMap = generate2DArray(buildingDistributionMap, gridSize);
+			 }
+			
+			// Generate the scene / city terrain
+			 function generateCityTerrain() {
+			   
+				var streetHeight = 2 * curbHeight;
+			 
+				// Initialize the base mesh parameters and create the base mesh
+			 
+				var baseColor = colors.DARK_BROWN;
+			 
+				var baseGeometryParams = {
+				   width: getCityWidth(),
+				   height: groundHeight,
+				   depth: getCityLength()
+				};
+			 
+				var basePosition = {
+				   x: 0,
+				   y: -(groundHeight / 2) - streetHeight,
+				   z: 0
+				};
+			 
+				var baseMesh = getBoxMesh(baseGeometryParams, basePosition, baseColor);
+			 
+				// Initialize the water mesh parameters and create the water mesh
+			 
+				var waterGeometryParams = {
+				   width: getCityWidth() - 2,
+				   height: 0,
+				   depth: getCityLength() - 2
+				};
+			 
+				var waterPosition = {
+				   x: 0,
+				   y: -streetHeight,
+				   z: 0
+				};
+			 
+				var water = getWaterMesh(waterGeometryParams, waterPosition);
+			 
+				// Create the ground level / street level meshes and add them to a list
+			 
+				var groundMeshList = [];
+				var streetMeshList = [];
+			 
+				for (var i = 0; i < groundMap.length; i++) {
+				   for (var j = 0; j < groundMap[0].length; j++) {
+					 
+					  if (isGroundBlock(i, j)) {
+						
+						 var x = getSceneXCoordinate(i);
+						 var z = getSceneZCoordinate(j);
+			 
+						 groundMeshList.push(
+							getBoxMesh(
+							   // Geometry parameters
+							   {
+								  width: blockSize,
+								  height: 0,
+								  depth: blockSize
+							   },
+							   // Positional parameters
+							   {
+								  x: x,
+								  y: -streetHeight,
+								  z: z
+							   }, // Mesh color
+							   colors.DARK_BROWN
+							)
+						 );
+			 
+						 streetMeshList.push(
+							getBoxMesh(
+							   // Geometry parameters
+							   {
+								  width: blockSize,
+								  height: streetHeight,
+								  depth: blockSize
+							   },
+							   // Positional parameters
+							   {
+								  x: x,
+								  y: -streetHeight / 2,
+								  z: z
+							   }, // Mesh color
+							   colors.STREET
+							)
+						 );
+					  }
+					 
+				   }
+				}
+			 
+				// Merge the street / ground level meshes and add them to the scene
+			 
+				if (streetMeshList.length) scene.add(getMergedMesh(streetMeshList));
+				if (groundMeshList.length) scene.add(getMergedMesh(groundMeshList));
+			 
+				// Finally, add in the base and water meshes to finish off the terrain
+				scene.add(baseMesh, water);
+			   
+			 }
+			
+			 // Generate the ground / city blocks composed of buildings / parks / parking and add them
+			 // to the scene
+			 function generateGroundBlocks() {
+			   
+				// Go through each one of our grid blocks
+				for (var i = 0; i < gridSize; i++) {
+				   for (var j = 0; j < gridSize; j++) {
+					 
+					  // Check if we have a ground block located on this grid (i, j) position
+					  if (isGroundBlock(i, j)) {
+						
+						 // Translate our grid coordinates to the scene (x, z) coordinates
+			 
+						 var x = getSceneXCoordinate(i);
+						 var z = getSceneZCoordinate(j);
+			 
+						 // Calculate the total block curb width
+						 var curbWidth = blockSize - roadWidth;
+			 
+						 // Check if we have a building block allocated in on our grid (i, j) coordinates
+						 if (isBuildingBlock(i, j)) {
+			 
+							// Generate the building curb mesh and add it to the scene
+			 
+							var buildingCurbMesh = getBoxMesh(
+							   // Geometry parameters
+							   {
+								  width: curbWidth,
+								  height: curbHeight,
+								  depth: curbWidth
+							   },
+							   // Positional parameters
+							   {
+								  x: x,
+								  y: curbHeight / 2,
+								  z: z
+							   }, // Mesh color
+							   colors.DARK_GREY
+							);
+			 
+							scene.add(buildingCurbMesh);
+			 
+							// Generate a building / buildings with a random height parameter and add it / them to the scene:
+			 
+							var buildingHeight = getRandomIntBetween(
+							   minBuildingHeight,
+							   maxBuildingHeight
+							);
+			 
+							const buildingWidth = curbWidth - blockMargin * 2;
+			 
+							const buildingGeometryParameters = {
+							   width: buildingWidth,
+							   height: buildingHeight,
+							   depth: buildingWidth
+							};
+			 
+							const buildingPosition = {
+							   x: x,
+							   z: z
+							};
+			 
+							generateBuildingBlock(
+							   buildingGeometryParameters,
+							   buildingPosition,
+							   blockSubdivisions,
+							   []
+							);
+						   
+						 } else {
+						   
+							// Otherwise, we don't have a building block, so we use a heuristic approach to deciding whether to
+							// use the block to either construct a park or parking. If the block is surrounded by less than 5
+							// buildings, we build a park. Otherwise, we build an empty 'parking' lot / block.
+			 
+							var numberOfSurroundingBuildings = getSurroundingBuildingNumber(i, j);
+			 
+							// If the building block is surrounded by less than 5 buildings, we allocate it to a park:
+							if (numberOfSurroundingBuildings < 5) {
+							  
+							   // Generate the green park mesh and add it to the scene:
+			 
+							   var parkMesh = getBoxMesh(
+								  // Geometry parameters
+								  {
+									 width: curbWidth,
+									 height: curbHeight,
+									 depth: curbWidth
+								  },
+								  // Positional parameters
+								  {
+									 x: x,
+									 y: curbHeight / 2,
+									 z: z
+								  }, // Mesh color
+								  colors.GREEN
+							   );
+			 
+							   scene.add(parkMesh);
+			 
+							   // Generate the trees to add to our park mesh
+			 
+							   var buildingWidth = curbWidth - blockMargin * 2;
+			 
+							   generateTrees(x, z, buildingWidth);
+			 
+							} else {
+							  
+							   // Otherwise, we assign the block to hold parking, which is essentially an empty curb we add
+							   // to our scene
+			 
+							   var parkingMesh = getBoxMesh(
+								  // Geometry parameters
+								  {
+									 width: curbWidth,
+									 height: curbHeight,
+									 depth: curbWidth
+								  },
+								  // Positional parameters
+								  {
+									 x: x,
+									 y: curbHeight / 2,
+									 z: z
+								  }, // Mesh color
+								  colors.DARK_GREY
+							   );
+			 
+							   scene.add(parkingMesh);
+			 
+							}
+						 }
+					  }
+				   }
+				}
+			 }
+		</script>
+
+	</body>
+</html>
